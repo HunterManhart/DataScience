@@ -1,0 +1,284 @@
+---
+title: "Final Project on Framingham"
+author: "Hunter Manhart and Arturo Perez"
+date: "December 5, 2017"
+output: html_document
+---
+
+##Load library and data
+We need the glmnet package
+```{r, eval=FALSE}
+install.packages("glmnet", repos = "http://cran.us.r-project.org")
+```
+
+Then load it in
+```{r, message=FALSE, warning=FALSE}
+library(glmnet)
+```
+
+Now get the Framingham data (make sure frm.csv is in the same directory)
+```{r, eval=T}
+framingham <- read.csv("frm.csv")
+```
+
+Let's glance at how the data is organized
+```{r, eval=T}
+str(framingham)
+```
+
+
+##Divide and scale data
+Get the titles of the columns of data
+```{r}
+fnames=names(framingham)
+fnames
+```
+
+Split into factors and events
+```{r}
+FactorNames=fnames[seq(1,24)]
+EventNames=fnames[seq(25,40)]
+```
+
+Scale the factored data
+```{r}
+fhscaled<-framingham
+fhscaled[FactorNames]<-as.data.frame(scale(framingham[FactorNames]))
+str(fhscaled)
+```
+
+
+##Mortality
+
+How common was death
+```{r}
+sum(framingham['DEATH'])
+```
+
+Let's isolate the data of those who died
+```{r, eval=T}
+deaths<-subset(framingham, DEATH==1)
+#deaths<-subset(deaths, !duplicated(RANDID)) 
+eventTimes<-c('TIMEMI','TIMEMIFC','TIMECHD','TIMESTRK','TIMECVD','TIMEDTH','TIMEHYP')
+plot(deaths[eventTimes])
+```
+Ridge regression on the data to see if we have any reasonable linear seperation of the data.
+```{r}
+events<-setdiff(eventTimes,cbind("TIMEDTH"))
+x<-as.matrix(deaths[events])
+y<-as.matrix(deaths$TIMEDTH)
+crossv <- cv.glmnet(x, y, alpha=1)  #alpha=1 is lasso, alpha=0 is ridge, lambda =0 is linear regression
+plot(crossv)
+```
+
+1000000 seems kind of high, even if the time variables go from 0-8766.  To help predict let's throw the 8766, i.e. no event, to higher number so that it sepearates by a larger gap
+```{r}
+x[x ==8766] <- 100000
+crossv <- cv.glmnet(x, y, alpha=1)  #alpha=1 is lasso, alpha=0 is ridge, lambda =0 is linear regression
+plot(crossv)
+```
+
+The MSE came down a magnitude, so now lets see if the beta's are indicitive of any interesting relaionships.
+```{r}
+fit = glmnet(x,y, alpha=1)
+plot(fit)
+
+vnat=coef(fit)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(x),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+Unsuprisingly, fatal coronary heart disease is fatal.  Strokes also appear to be somewhat indicitive of death, but beyond that not too much is interesting.  The negative for hypertension is likely it correlating with other factors that would lessen the likelyhood of death.
+```{r}
+beta<-coef(fit,s=2.718^-4)
+beta
+```
+
+
+##Predict Diabetes
+
+Let's now see if cholesterol and glucose affect the onset of diabetes. 
+
+First let's check how many NA's we have
+```{r}
+nacols<-apply(framingham, 2, function(x) {sum(is.na(x))})
+nacols
+```
+
+Then isolate to the third period for cholesterol data and remove remaining NA's
+```{r}
+thirdPeriod <-subset(fhscaled, PERIOD>1)
+thirdPeriod <- thirdPeriod[complete.cases(thirdPeriod),]
+str(thirdPeriod)
+```
+
+##Logistic Regression
+
+Let's examine the relations with logistic regression.  We'll do a sample run with hypertension.  We remove prehyp because that's too indicitive and will cover other relations. Time as well because more people will get hypertension as time goes on.  BPMEDs because they are likely taking anti-hypertension meds if they have hypertension.
+```{r}
+factors <- setdiff(FactorNames, cbind('PREVHYP', 'TIME', 'BPMEDS', 'RANDID'))
+x <- as.matrix(thirdPeriod[factors])
+y <- as.matrix(thirdPeriod$HYPERTEN)
+
+fit = glmnet(x, y, family = "binomial")
+plot(fit)
+
+vnat=coef(fit)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(x),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+It seems high systolic blood pressure indicates likelyhood towards hypertension; diastolic as well but less so.  
+```{r}
+beta<-coef(fit,s=2.718^-4)
+beta
+```
+
+Now let's test with what we want to find out: the relationship between diabetes and cholesterol.  Glucose was too indicative and so we took that out.
+```{r}
+fkeep <- setdiff(FactorNames, cbind('DIABETES','TIME','GLUCOSE', 'RANDID'))
+x <- as.matrix(thirdPeriod[fkeep])
+
+diabetes <-subset(framingham, PERIOD==3)
+diabetes <- diabetes[complete.cases(diabetes),]
+y <- as.matrix(diabetes$DIABETES)
+fit = glmnet(x, y, family = "binomial")
+plot(fit)
+
+vnat=coef(fit)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(x),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+Interestingly, high systolic and low diastolic bloodpressure indicates diabetes.  It appears to be that a large difference between the two is a signal for diabetes.  Both cholesterols seem to be preventative of diabetes, even the bad ldlc, and yet total cholesterol has little effect.  High heartrate and BMI are indicative but that's rather obvious.  
+
+Cigarettes are likely negative by affecting other data, e.g. killing you with lung cancer first, although smoking does correlate with lower body weight (at least according to common knowledge).  Although currently smoking encourages diabetes.  Perhaps cigs per day has a quadratic relation to diabetes.
+```{r}
+beta<-coef(fit,s=2.718^-6)
+beta
+```
+
+Common knowledge was a little right in this case.
+```{r}
+cigbmi <- framingham[c('CIGPDAY', 'BMI')]
+cigbmi <- cigbmi[complete.cases(cigbmi),]
+str(cigbmi)
+cor(cigbmi$CIGPDAY, cigbmi$BMI)
+```
+
+
+Let's try x with two new factors: sysbp - diabp, cigpday^2
+```{r}
+faug <- subset(framingham, PERIOD==3)
+faug <- faug[complete.cases(faug),]
+
+faug['CIGPDAYSQ'] <- faug['CIGPDAY']*faug['CIGPDAY']
+faug['BPDIFF'] <- faug['SYSBP'] - faug['DIABP']
+
+ExtFactorNames <- c(FactorNames, 'CIGPDAYSQ', 'BPDIFF')
+ExtFactorNames <- setdiff(ExtFactorNames, cbind('DIABETES', 'PERIOD', 'GLUCOSE', 'RANDID'))
+str(ExtFactorNames)
+faug[ExtFactorNames]<-as.data.frame(scale(faug[ExtFactorNames]))
+
+xaug <- as.matrix(faug[ExtFactorNames])
+y <- as.matrix(faug$DIABETES)
+
+
+fit = glmnet(xaug, y, family = "binomial")
+plot(fit)
+
+vnat=coef(fit)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(xaug),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+It appears the BPDIFF is highly indicative and that CIGPDAY is more effectively indictive quadraticly.  Systolic also no longer has effect, so it appears to have be resultant of the difference between systolic and diastolic.
+```{r}
+beta<-coef(fit,s=2.718^-6)
+beta
+```
+
+
+##Compare to linear regression
+
+Just to see what difference in results we get with a ridge regression over logarithmic regression
+```{r}
+linear = cv.glmnet(xaug,y, family="binomial")
+
+plot(linear)
+```
+
+```{r}
+linear = cv.glmnet(xaug,y, alpha=0)
+
+plot(linear)
+```
+
+```{r}
+linear = glmnet(xaug,y, alpha=0)
+plot(linear)
+
+vnat=coef(linear)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(xaug),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+The results seem mostly the same excepting slightly different coefficients.
+```{r}
+beta<-coef(fit,s=2.718^-6)
+beta
+```
+
+##Try with larger sample
+
+If we ignore cholesterol we can examine a larger sample and see if we get similar results
+```{r}
+fnamesKeep <- setdiff(FactorNames,cbind("HDLC", "LDLC","DIABETES","RANDID", "GLUCOSE"))
+diabetesKeep <- setdiff(fnames,cbind("HDLC", "LDLC", "GLUCOSE"))
+fhs.noHLG<-fhscaled[fnamesKeep]
+fhs.noHLG<-fhs.noHLG[complete.cases(fhs.noHLG),]
+diabetesY <- framingham[diabetesKeep]
+diabetesY <- diabetesY[complete.cases(diabetesY),]
+str(fhs.noHLG)
+```
+
+```{r}
+x <- as.matrix(fhs.noHLG)
+y <- as.matrix(diabetesY$DIABETES)
+fit = glmnet(x, y, alpha=1)
+plot(fit)
+
+vnat=coef(fit)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(x),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+Now current smoking and education have no effect whereas previously they did, but everything else seems about the same.
+```{r}
+beta<-coef(fit,s=2.718^-6)
+beta
+```
+
+
+##LDA
+
+We also attempted LDA on predicting strokes, but we are having trouble with the predict function.
+```{r, message=FALSE, warning=FALSE}
+library(MASS)
+```
+
+
+```{r}
+keep <- setdiff(FactorNames, cbind('HDLC','LDLC','GLUCOSE'))
+strokeData <- fhscaled[keep]
+strokeData["STROKE"] <- fhscaled["STROKE"]
+strokeData <- strokeData[complete.cases(strokeData),]
+
+train <- subset(strokeData, RANDID > 0)
+test <- setdiff(strokeData, train)
+
+z <- lda(STROKE ~ ., data=data.frame(train), 
+   na.action="na.omit", CV=TRUE)
+
+#predict(z, data.frame(test[-'STROKE']))
+```

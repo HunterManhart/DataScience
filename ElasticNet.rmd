@@ -1,0 +1,127 @@
+---
+title: "ElasticNet"
+author: "Hunter Manhart"
+date: "November 11, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Notebook for running ridge-regression and lasso on the SAheart dataset, using cross-validation
+
+We need the glmnet package:
+```{r, eval=FALSE}
+install.packages("glmnet", repos = "http://cran.us.r-project.org")
+```
+
+Also, load the libraries:
+```{r, message=FALSE, warning=FALSE}
+library(glmnet)
+library(ElemStatLearn)
+```
+
+Make famhist numeric
+```{r}
+SAh=as.matrix(SAheart[,-5])
+famhist <- as.numeric(SAheart[,5])
+SAh=cbind(SAh[,1:4],famhist,SAh[,5:9])
+```
+
+Use CHD, LDL, and adiposity as output variables
+```{r}
+XCHD = SAh[,-10]
+yCHD = SAh[,10]
+
+XLDL = SAh[,-3]
+yLDL = SAh[,3]
+
+XADI = SAh[,-4]
+yADI = SAh[,4]
+```
+
+Preform ridge-regression
+```{r}
+ridgeCHD = glmnet(XCHD,yCHD, alpha=0)
+ridgeLDL = glmnet(XLDL,yLDL, alpha=0)
+ridgeADI = glmnet(XADI,yADI, alpha=0)
+```
+
+Plot
+```{r}
+plot(ridgeCHD)
+vnat=coef(ridgeCHD)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(XCHD),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+```{r}
+plot(ridgeLDL)
+vnat=coef(ridgeLDL)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(XLDL),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+Had to print this on lambda axis because the graph strangely curves back on itself in L1
+```{r}
+plot(ridgeADI, xvar='lambda')
+vnat=coef(ridgeADI)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(XADI),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+
+Preform lasso
+```{r}
+lassoCHD = glmnet(XCHD,yCHD, alpha=1)
+lassoLDL = glmnet(XLDL,yLDL, alpha=1)
+lassoADI = glmnet(XADI,yADI, alpha=1)
+```
+
+Plot
+```{r}
+plot(lassoCHD)
+vnat=coef(lassoCHD)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(XCHD),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+```{r}
+plot(lassoLDL)
+vnat=coef(lassoLDL)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(XLDL),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+```{r}
+plot(lassoADI)
+vnat=coef(lassoADI)
+vnat=vnat[-1,ncol(vnat)] # remove the intercept, and get the coefficients at the end of the path
+axis(4, at=vnat,line=-.5,label=colnames(XADI),las=1,tick=FALSE, cex.axis=0.5)
+```
+
+
+
+```{r}
+cvfit = cv.glmnet(XADI,yADI, alpha=1)
+plot(cvfit)
+```
+```{r}
+cvfit$lambda.min
+```
+
+
+Age, LDL, and obesity appear to be the most important factors for adiposity (based on the adiposity lasso)
+```{r}
+Xless = cbind(SAh[,3], SAh[,7], SAh[,9])
+```
+
+We now have a similarly small mean-squared error using only 3 of the 9 input variables
+```{r}
+cvfit = cv.glmnet(Xless,yADI, alpha=1)
+plot(cvfit)
+```
+```{r}
+cvfit$lambda.min
+```
